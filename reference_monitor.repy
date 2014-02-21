@@ -1,0 +1,109 @@
+TYPE="type"
+ARGS="args"
+RETURN="return"
+EXCP="exceptions"
+TARGET="target"
+FUNC="func"
+OBJC="objc"
+
+class SecureFile():
+  def __init__(self,file):
+    # globals
+      
+    self.allowr = False
+    self.alloww = False
+    self.allowa = False
+    
+    self.file = file
+    self.lock = createlock()
+    self.filelen = len(self.file.readat(None, 0))
+
+  def setread(self,enabled):
+	try:
+		self.lock.acquire(True)  
+		self.allowr = enabled
+		return self.file.readat(None,0)
+	finally:
+		self.lock.release()
+
+  def setwrite(self,enabled):
+	try:
+		self.lock.acquire(True)    
+		self.file.writeat("",0)
+		self.alloww = enabled
+	finally:
+		self.lock.release()
+
+  def setappend(self,enabled):   
+	try:
+		self.lock.acquire(True)
+		self.allowa = enabled
+	finally:
+		self.lock.release()	
+		
+  def readat(self,bytes,offset):
+	try:
+		self.lock.acquire(True)
+
+		if not self.allowr:
+			raise ValueError
+
+		return self.file.readat(bytes,offset)
+	finally:
+		self.lock.release()
+
+  def writeat(self,data,offset):
+	try:
+		self.lock.acquire(True)
+		#write and append
+		if self.alloww and self.allowa:
+			self.file.writeat(data,offset)
+
+		#only write
+		elif self.alloww:
+			data = data[:self.filelen-offset]
+
+		#only append
+		elif self.allowa:
+			if offset+len(data)<=self.filelen:
+				return
+			elif offset<self.filelen:
+				data = data[self.filelen-offset:]
+				offset=self.filelen
+
+		if not self.alloww and not self.allowa:
+			raise ValueError
+
+		# write file	
+		self.file.writeat(data,offset)
+
+		# update filelen
+		self.filelen = max(self.filelen,offset + len(data))
+	finally:
+		self.lock.release()
+
+
+  def close(self):
+	try:
+		self.lock.acquire(True)
+		return self.file.close()
+	finally:
+		self.lock.release()
+
+sec_file_def = {"obj-type":SecureFile,
+                "name":"SecureFile",
+                "setread":{TYPE:FUNC,ARGS:[bool],EXCP:Exception,RETURN:str,TARGET:SecureFile.setread},
+                "setwrite":{TYPE:FUNC,ARGS:[bool],EXCP:Exception,RETURN:(type(None)),TARGET:SecureFile.setwrite},
+                "setappend":{TYPE:FUNC,ARGS:[bool],EXCP:Exception,RETURN:(type(None)),TARGET:SecureFile.setappend},
+                "readat":{TYPE:FUNC,ARGS:((int,long),(int,long)),EXCP:Exception,RETURN:str,TARGET:SecureFile.readat},
+                "writeat":{TYPE:FUNC,ARGS:(str,(int,long)),EXCP:Exception,RETURN:(int,type(None)),TARGET:SecureFile.writeat},
+                "close":{TYPE:FUNC,ARGS:None,EXCP:None,RETURN:(bool,type(None)),TARGET:SecureFile.close}
+           }
+
+def secure_openfile(filename, create):
+  f = openfile(filename,create)
+  return SecureFile(f)
+
+CHILD_CONTEXT_DEF["openfile"] = {TYPE:OBJC,ARGS:(str,bool),EXCP:Exception,RETURN:sec_file_def,TARGET:secure_openfile}
+
+secure_dispatch_module()
